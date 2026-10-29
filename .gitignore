@@ -1,2 +1,4 @@
 .venv
 logs
+emergency_photos
+__pycache__
