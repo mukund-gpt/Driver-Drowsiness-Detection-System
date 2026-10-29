@@ -1,4 +1,3 @@
-
 import os
 import csv
 import time
@@ -8,10 +7,10 @@ import numpy as np
 import mediapipe as mp
 import pygame
 
+from emergency import EmergencyEmail
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
+
+
 CAMERA_INDEX = 0
 ALARM_FILE = "beep.mp3"
 
@@ -22,6 +21,8 @@ MAR_THRESHOLD = 0.60
 YAWN_SECONDS = 1.5
 
 GESTURE_CONFIRM_FRAMES = 5
+
+EMERGENCY_DELAY_SECONDS = 0
 
 LOG_DIR = "logs"
 CSV_FILE = os.path.join(LOG_DIR, "driver_events.csv")
@@ -40,13 +41,13 @@ face_mesh = mp_face_mesh.FaceMesh(
     max_num_faces=1,
     refine_landmarks=True,
     min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
+    min_tracking_confidence=0.5,
 )
 
 hands = mp_hands.Hands(
     max_num_hands=2,
     min_detection_confidence=0.6,
-    min_tracking_confidence=0.6
+    min_tracking_confidence=0.6,
 )
 
 
@@ -61,7 +62,7 @@ CSV_FIELDS = [
     "ear",
     "mar",
     "head_yaw",
-    "head_pitch"
+    "head_pitch",
 ]
 
 if not os.path.exists(CSV_FILE) or os.path.getsize(CSV_FILE) == 0:
@@ -69,31 +70,41 @@ if not os.path.exists(CSV_FILE) or os.path.getsize(CSV_FILE) == 0:
         writer = csv.DictWriter(file, fieldnames=CSV_FIELDS)
         writer.writeheader()
 
-
 session_start = time.time()
 
 
-def log_event(event, details="", ear=None, mar=None,
-              yaw=None, pitch=None):
+def log_event(event, details="", ear=None, mar=None, yaw=None, pitch=None):
     """Append one event to the session CSV."""
     row = {
-        "timestamp": datetime.datetime.now().isoformat(
-            timespec="seconds"
-        ),
-        "session_elapsed_seconds": round(
-            time.time() - session_start, 2
-        ),
+        "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+        "session_elapsed_seconds": round(time.time() - session_start, 2),
         "event": event,
         "details": details,
         "ear": round(ear, 3) if ear is not None else "",
         "mar": round(mar, 3) if mar is not None else "",
         "head_yaw": round(yaw, 2) if yaw is not None else "",
-        "head_pitch": round(pitch, 2) if pitch is not None else ""
+        "head_pitch": round(pitch, 2) if pitch is not None else "",
     }
 
     with open(CSV_FILE, "a", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=CSV_FIELDS)
         writer.writerow(row)
+
+
+# =========================================================
+# EMERGENCY EMAIL CONFIGURATION
+# =========================================================
+# Replace these example addresses with your actual contacts.
+# Gmail sender credentials should be configured as environment
+# variables: EMERGENCY_SENDER_EMAIL and
+# EMERGENCY_SENDER_APP_PASSWORD.
+emergency_email = EmergencyEmail(
+    recipients=[
+        "siachin8273@gmail.com",
+    ],
+    email_rounds=3,
+    email_interval=10,
+)
 
 
 # =========================================================
@@ -134,21 +145,24 @@ MOUTH_HORIZONTAL = (78, 308)
 POSE_LANDMARKS = [1, 152, 33, 263, 61, 291]
 
 # Approximate generic 3D face model points.
-MODEL_3D_POINTS = np.array([
-    (0.0, 0.0, 0.0),          # Nose
-    (0.0, -330.0, -65.0),     # Chin
-    (-225.0, 170.0, -135.0),  # Left eye corner
-    (225.0, 170.0, -135.0),   # Right eye corner
-    (-150.0, -150.0, -125.0), # Left mouth corner
-    (150.0, -150.0, -125.0)   # Right mouth corner
-], dtype=np.float64)
+MODEL_3D_POINTS = np.array(
+    [
+        (0.0, 0.0, 0.0),          # Nose
+        (0.0, -330.0, -65.0),     # Chin
+        (-225.0, 170.0, -135.0),  # Left eye corner
+        (225.0, 170.0, -135.0),   # Right eye corner
+        (-150.0, -150.0, -125.0), # Left mouth corner
+        (150.0, -150.0, -125.0),  # Right mouth corner
+    ],
+    dtype=np.float64,
+)
 
 
 def landmark_xy(face, index, width, height):
     point = face.landmark[index]
     return np.array(
         [point.x * width, point.y * height],
-        dtype=np.float64
+        dtype=np.float64,
     )
 
 
@@ -181,19 +195,25 @@ def calculate_mar(face, width, height):
 
 
 def estimate_head_pose(face, width, height):
-    image_points = np.array([
-        landmark_xy(face, index, width, height)
-        for index in POSE_LANDMARKS
-    ], dtype=np.float64)
+    image_points = np.array(
+        [
+            landmark_xy(face, index, width, height)
+            for index in POSE_LANDMARKS
+        ],
+        dtype=np.float64,
+    )
 
     focal_length = float(width)
     center = (width / 2.0, height / 2.0)
 
-    camera_matrix = np.array([
-        [focal_length, 0, center[0]],
-        [0, focal_length, center[1]],
-        [0, 0, 1]
-    ], dtype=np.float64)
+    camera_matrix = np.array(
+        [
+            [focal_length, 0, center[0]],
+            [0, focal_length, center[1]],
+            [0, 0, 1],
+        ],
+        dtype=np.float64,
+    )
 
     distortion = np.zeros((4, 1), dtype=np.float64)
 
@@ -202,7 +222,7 @@ def estimate_head_pose(face, width, height):
         image_points,
         camera_matrix,
         distortion,
-        flags=cv2.SOLVEPNP_ITERATIVE
+        flags=cv2.SOLVEPNP_ITERATIVE,
     )
 
     if not success:
@@ -210,8 +230,8 @@ def estimate_head_pose(face, width, height):
 
     rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
 
-    # OpenCV returns angles in degrees. Pitch and yaw are
-    # approximate because the 3D face model is generic.
+    # OpenCV returns angles in degrees. Pitch and yaw are approximate
+    # because the 3D face model is generic.
     angles = cv2.RQDecomp3x3(rotation_matrix)[0]
 
     pitch = float(angles[0])
@@ -240,8 +260,12 @@ def is_thumbs_up(hand):
     thumb_separated = abs(lm[4].x - lm[8].x) > 0.06
 
     return (
-        thumb_up and index_folded and middle_folded
-        and ring_folded and pinky_folded and thumb_separated
+        thumb_up
+        and index_folded
+        and middle_folded
+        and ring_folded
+        and pinky_folded
+        and thumb_separated
     )
 
 
@@ -251,11 +275,11 @@ def is_thumbs_up(hand):
 stats = {
     "drowsiness_alerts": 0,
     "yawns": 0,
-    "dismissals": 0
+    "dismissals": 0,
 }
 
-def record_event(event, details="", ear=None, mar=None,
-                 yaw=None, pitch=None):
+
+def record_event(event, details="", ear=None, mar=None, yaw=None, pitch=None):
     log_event(event, details, ear, mar, yaw, pitch)
 
 
@@ -286,6 +310,12 @@ gesture_frames = 0
 face_missing_frames = 0
 
 last_yawn_logged = 0.0
+
+# Emergency timer state. It starts when drowsy becomes active and resets
+# whenever the alarm state becomes inactive (including thumbs-up dismissal).
+emergency_timer_start = None
+emergency_triggered = False
+
 
 print("Driver monitoring started. Press Q to quit.")
 record_event("SESSION_START", "Monitoring started")
@@ -322,7 +352,9 @@ try:
         if hand_results.multi_hand_landmarks:
             for hand in hand_results.multi_hand_landmarks:
                 mp_drawing.draw_landmarks(
-                    frame, hand, mp_hands.HAND_CONNECTIONS
+                    frame,
+                    hand,
+                    mp_hands.HAND_CONNECTIONS,
                 )
 
                 if is_thumbs_up(hand):
@@ -349,23 +381,27 @@ try:
             draw_left = np.array(left_eye, dtype=np.int32)
 
             cv2.polylines(
-                frame, [draw_right.reshape((-1, 1, 2))],
-                True, (0, 255, 0), 1
+                frame,
+                [draw_right.reshape((-1, 1, 2))],
+                True,
+                (0, 255, 0),
+                1,
             )
             cv2.polylines(
-                frame, [draw_left.reshape((-1, 1, 2))],
-                True, (0, 255, 0), 1
+                frame,
+                [draw_left.reshape((-1, 1, 2))],
+                True,
+                (0, 255, 0),
+                1,
             )
 
             ear = (
-                calculate_ear(right_eye) +
-                calculate_ear(left_eye)
+                calculate_ear(right_eye)
+                + calculate_ear(left_eye)
             ) / 2.0
 
             mar = calculate_mar(face, width, height)
-            yaw, pitch, roll = estimate_head_pose(
-                face, width, height
-            )
+            yaw, pitch, roll = estimate_head_pose(face, width, height)
 
             # ---------------- EYE CLOSURE ----------------
             if ear < EAR_THRESHOLD:
@@ -398,7 +434,10 @@ try:
                 record_event(
                     "YAWN_DETECTED",
                     f"Mouth aspect ratio={mar:.3f}",
-                    ear, mar, yaw, pitch
+                    ear,
+                    mar,
+                    yaw,
+                    pitch,
                 )
 
             # ---------------- TRIGGER ALERT ----------------
@@ -419,7 +458,10 @@ try:
                 record_event(
                     "ALERT_TRIGGERED",
                     alert_reason,
-                    ear, mar, yaw, pitch
+                    ear,
+                    mar,
+                    yaw,
+                    pitch,
                 )
 
         else:
@@ -436,7 +478,10 @@ try:
             record_event(
                 "ALERT_DISMISSED",
                 "Thumbs-up gesture recognized",
-                ear, mar, yaw, pitch
+                ear,
+                mar,
+                yaw,
+                pitch,
             )
 
             stats["dismissals"] += 1
@@ -446,14 +491,59 @@ try:
             yawn_start = None
             gesture_frames = 0
 
+        # ---------------- ALARM + EMERGENCY EMAIL ----------------
         if drowsy:
             start_alarm()
+
+            if emergency_timer_start is None:
+                emergency_timer_start = now
+
+            if (
+                not emergency_triggered
+                and now - emergency_timer_start >= EMERGENCY_DELAY_SECONDS
+            ):
+                # Set the flag before starting notification to prevent
+                # duplicate email threads for the same active alert.
+                emergency_triggered = True
+
+                try:
+                    photo_path = emergency_email.trigger(
+                        frame.copy(),
+                        alert_reason or "Driver monitoring alarm",
+                    )
+
+                    print(f"Emergency photo saved: {photo_path}")
+
+                    record_event(
+                        "EMERGENCY_NOTIFICATION_TRIGGERED",
+                        f"Alarm active for at least "
+                        f"{EMERGENCY_DELAY_SECONDS} seconds",
+                        ear,
+                        mar,
+                        yaw,
+                        pitch,
+                    )
+
+                except Exception as error:
+                    print(f"Emergency notification error: {error}")
+
+                    record_event(
+                        "EMERGENCY_NOTIFICATION_ERROR",
+                        str(error),
+                        ear,
+                        mar,
+                        yaw,
+                        pitch,
+                    )
+
         else:
             stop_alarm()
+            emergency_timer_start = None
+            emergency_triggered = False
 
-        # =================================================
+        # =========================================================
         # DASHBOARD OVERLAY
-        # =================================================
+        # =========================================================
         elapsed = int(now - session_start)
         minutes, seconds = divmod(elapsed, 60)
 
@@ -469,49 +559,78 @@ try:
 
         font = cv2.FONT_HERSHEY_SIMPLEX
 
-        def draw_overlay_text(text, origin, color, scale=0.5, thickness=1):
+        def draw_overlay_text(
+            text,
+            origin,
+            color,
+            scale=0.5,
+            thickness=1,
+        ):
             cv2.putText(
-                frame, text, origin, font, scale,
-                (255, 255, 255), thickness + 3, cv2.LINE_AA
+                frame,
+                text,
+                origin,
+                font,
+                scale,
+                (255, 255, 255),
+                thickness + 3,
+                cv2.LINE_AA,
             )
             cv2.putText(
-                frame, text, origin, font, scale,
-                color, thickness, cv2.LINE_AA
+                frame,
+                text,
+                origin,
+                font,
+                scale,
+                color,
+                thickness,
+                cv2.LINE_AA,
             )
 
         left_stats = [
             (f"Session: {minutes:02d}:{seconds:02d}", 26),
             (f"EAR: {ear:.2f}" if ear is not None else "EAR: N/A", 50),
-            (f"MAR: {mar:.2f}" if mar is not None else "MAR: N/A", 74)
+            (f"MAR: {mar:.2f}" if mar is not None else "MAR: N/A", 74),
         ]
+
         right_stats = [
             (f"Alerts: {stats['drowsiness_alerts']}", 26),
             (f"Yawns: {stats['yawns']}", 50),
-            (f"Dismissals: {stats['dismissals']}", 74)
+            (f"Dismissals: {stats['dismissals']}", 74),
         ]
 
         for text, y_position in left_stats:
             draw_overlay_text(text, (12, y_position), (0, 0, 0))
 
         for text, y_position in right_stats:
-            text_width = cv2.getTextSize(text, font, 0.5, 1)[0][0]
+            text_width = cv2.getTextSize(
+                text, font, 0.5, 1
+            )[0][0]
             draw_overlay_text(
-                text, (width - text_width - 12, y_position),
-                (0, 0, 0)
+                text,
+                (width - text_width - 12, y_position),
+                (0, 0, 0),
             )
 
-        status_width = cv2.getTextSize(status, font, 0.65, 2)[0][0]
+        status_width = cv2.getTextSize(
+            status, font, 0.65, 2
+        )[0][0]
         draw_overlay_text(
-            status, ((width - status_width) // 2, 105),
-            status_color, scale=0.65, thickness=2
+            status,
+            ((width - status_width) // 2, 105),
+            status_color,
+            scale=0.65,
+            thickness=2,
         )
 
         gesture_hint = "THUMBS UP: dismiss alert | Q: quit"
-        hint_width = cv2.getTextSize(gesture_hint, font, 0.5, 1)[0][0]
+        hint_width = cv2.getTextSize(
+            gesture_hint, font, 0.5, 1
+        )[0][0]
         draw_overlay_text(
             gesture_hint,
             ((width - hint_width) // 2, height - 16),
-            (0, 0, 0)
+            (0, 0, 0),
         )
 
         display_scale = min(1.5, 1280 / width, 900 / height)
@@ -520,8 +639,9 @@ try:
             None,
             fx=display_scale,
             fy=display_scale,
-            interpolation=cv2.INTER_LINEAR
+            interpolation=cv2.INTER_LINEAR,
         )
+
         cv2.imshow("AI Driver Monitoring Dashboard", display_frame)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
